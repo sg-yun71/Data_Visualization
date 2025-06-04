@@ -17,8 +17,8 @@ with open("data/ocr_result.txt", "r") as f:
     ocr_text = f.read().strip()
 
 # 단일 프롬프트 설정
-prompt_name = "간단한 번역요청"
-prompt_text = f"다음 문장을 이해할 수 있게 번역해줘: \"{ocr_text}\""
+prompt_name = "전문가수준요청"
+prompt_text = f" 'Attention is all you need'라는 문장은 인공지능 역사에서 전환점으로 평가받는다. 이 문장의 의미, 해당 논문이 기존 RNN 기반 모델과 어떤 차별점을 가졌는지, 그리고 이후 BERT와 GPT 같은 모델에 어떤 영향을 미쳤는지 단계별로 설명하고, 마지막엔 본인의 의견도 간단히 덧붙여줘: \"{ocr_text}\""
 
 # LLM 응답 받기
 response = client.chat.completions.create(

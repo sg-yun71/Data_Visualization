@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>프롬프트에 따른 OCR 성능 비교</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+    }
+    .bar {
+      fill: steelblue;
+    }
+    .bar:hover {
+      fill: orange;
+    }
+    .chart {
+      margin-bottom: 50px;
+    }
+    #promptText {
+      margin-top: 40px;
+      padding: 25px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      box-shadow: 2px 2px 8px rgba(0,0,0,0.05);
+      font-size: 16px;
+      line-height: 1.8;
+      max-width: 900px;
+    }
+    #promptText h3 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #222;
+    }
+    #promptText strong {
+      font-weight: 600;
+      display: inline-block;
+      margin-top: 20px;
+      margin-bottom: 10px;
+    }
+    #promptText p {
+      margin: 0 0 10px;
+    }
+    .prompt-box {
+      background: #f5f5f5;
+      padding: 12px 16px;
+      border-left: 4px solid #aaa;
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+    }
+    .tooltip {
+      position: absolute;
+      text-align: center;
+      padding: 6px 12px;
+      font-size: 14px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+  </style>
+</head>
+<body>
+  <h1>프롬프트에 따른 OCR 성능 비교</h1>
+  <div id="charts"></div>
+  <div id="promptText">프롬프트를 클릭하면 내용을 볼 수 있습니다.</div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    const metrics = ["length_score", "word_count", "sentence_count", "keyword_score"];
+    const metricLabels = {
+      length_score: "length_score",
+      word_count: "word_count",
+      sentence_count: "sentence_count",
+      keyword_score: "keyword_score"
+    };
+
+    const tooltip = d3.select("#tooltip");
+
+    d3.csv("data/performance_metrics.csv").then(data => {
+      metrics.forEach(metric => {
+        const width = 600;
+        const height = 300;
+        const margin = {top: 30, right: 30, bottom: 70, left: 60};
+
+        const svg = d3.select("#charts")
+          .append("svg")
+          .attr("width", width)
+          .attr("height", height)
+          .attr("class", "chart");
+
+        const x = d3.scaleBand()
+          .domain(data.map(d => d.prompt_name))
+          .range([margin.left, width - margin.right])
+          .padding(0.1);
+
+        const y = d3.scaleLinear()
+          .domain([0, d3.max(data, d => +d[metric])])
+          .nice()
+          .range([height - margin.bottom, margin.top]);
+
+        svg.append("g")
+          .attr("transform", `translate(0,${height - margin.bottom})`)
+          .call(d3.axisBottom(x))
+          .selectAll("text")
+          .attr("transform", "rotate(-45)")
+          .style("text-anchor", "end");
+
+        svg.append("g")
+          .attr("transform", `translate(${margin.left},0)`)
+          .call(d3.axisLeft(y));
+
+        svg.selectAll(".bar")
+          .data(data)
+          .enter()
+          .append("rect")
+          .attr("class", "bar")
+          .attr("x", d => x(d.prompt_name))
+          .attr("y", d => y(+d[metric]))
+          .attr("height", d => y(0) - y(+d[metric]))
+          .attr("width", x.bandwidth())
+          .on("mouseover", (event, d) => {
+            tooltip.style("opacity", 1)
+              .html(`<strong>${d.prompt_name}</strong><br/>${metricLabels[metric]}: <b>${d[metric]}</b>`);
+          })
+          .on("mousemove", event => {
+            tooltip.style("left", (event.pageX + 10) + "px")
+                   .style("top", (event.pageY - 28) + "px");
+          })
+          .on("mouseout", () => {
+            tooltip.style("opacity", 0);
+          })
+          .on("click", (event, d) => {
+            const file = `llm_prompts/${d.prompt_name}.json`;
+            d3.json(file).then(json => {
+              d3.select("#promptText").html(`
+                <h3>${d.prompt_name}</h3>
+                <strong>프롬프트:</strong>
+                <div class="prompt-box">${json.prompt}</div>
+                ${json.response ? `<strong>응답 결과:</strong><div class="prompt-box">${json.response}</div>` : ""}
+              `);
+            }).catch(err => {
+              d3.select("#promptText").html(`<h3>${d.prompt_name}</h3><p><i>프롬프트 파일을 불러올 수 없습니다.</i></p>`);
+            });
+          });
+
+        svg.append("text")
+          .attr("x", width / 2)
+          .attr("y", margin.top - 10)
+          .attr("text-anchor", "middle")
+          .style("font-size", "16px")
+          .text(`${metricLabels[metric]}`);
+      });
+    });
+  </script>
+</body>
+</html>
