@@ -1,158 +1,250 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>프롬프트에 따른 OCR 성능 비교</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
+      display: flex;
+      gap: 20px;
+      padding: 20px;
     }
-    .bar {
-      fill: steelblue;
+    #charts {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(2, 400px);
+      gap: 20px;
+      flex: 3;
     }
-    .bar:hover {
-      fill: orange;
-    }
-    .chart {
-      margin-bottom: 50px;
+    #charts svg {
+      width: 100%;
+      height: 100%;
     }
     #promptText {
-      margin-top: 40px;
-      padding: 25px;
-      background: #fff;
+      flex: 1;
+      max-width: 400px;
+      padding: 20px;
+      background: #f9f9f9;
       border: 1px solid #ddd;
-      border-radius: 10px;
-      box-shadow: 2px 2px 8px rgba(0,0,0,0.05);
-      font-size: 16px;
-      line-height: 1.8;
-      max-width: 900px;
+      border-radius: 8px;
+      overflow-y: auto;
     }
     #promptText h3 {
-      font-size: 20px;
-      margin-bottom: 20px;
-      color: #222;
-    }
-    #promptText strong {
-      font-weight: 600;
-      display: inline-block;
-      margin-top: 20px;
-      margin-bottom: 10px;
-    }
-    #promptText p {
-      margin: 0 0 10px;
+      margin-top: 0;
     }
     .prompt-box {
-      background: #f5f5f5;
-      padding: 12px 16px;
+      background: #fff;
+      padding: 10px;
       border-left: 4px solid #aaa;
       margin-bottom: 10px;
       white-space: pre-wrap;
     }
-    .tooltip {
-      position: absolute;
-      text-align: center;
-      padding: 6px 12px;
-      font-size: 14px;
-      background: rgba(0, 0, 0, 0.75);
-      color: #fff;
-      border-radius: 4px;
+    .bar, .dot, .radar-point {
+      fill: steelblue;
+      cursor: pointer;
+    }
+    .highlight {
+      fill: orange !important;
+    }
+    .line {
+      stroke: steelblue;
+      stroke-width: 2px;
+      fill: none;
+    }
+    .radar-area {
+      fill: lightblue;
+      opacity: 0.5;
       pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.2s ease;
     }
   </style>
 </head>
 <body>
-  <h1>프롬프트에 따른 OCR 성능 비교</h1>
-  <div id="charts"></div>
-  <div id="promptText">클릭하면 프롬프트 및 출력 내용을 볼 수 있습니다.</div>
-  <div class="tooltip" id="tooltip"></div>
+  <div>
+    <h1>프롬프트에 따른 <strong>OCR</strong> 성능 비교</h1>
+    <div id="charts"></div>
+  </div>
+  <div id="promptText">프롬프트를 클릭하면 내용을 볼 수 있습니다.</div>
 
   <script>
-    const metrics = ["length_score", "word_count", "sentence_count", "keyword_score"];
-    const metricLabels = {
-      length_score: "length_score",
-      word_count: "word_count",
-      sentence_count: "sentence_count",
-      keyword_score: "keyword_score"
-    };
+    // 선택된 프롬프트 이름
+    let selectedPrompt = null;
 
-    const tooltip = d3.select("#tooltip");
+    // 클릭 핸들러: 하이라이트 갱신 + JSON 로드
+    function handleClick(name) {
+      selectedPrompt = name;
+      // bar, dot, radar-point 모두 클래스 업데이트
+      d3.selectAll(".bar")
+        .classed("highlight", d => d.prompt_name === name);
+      d3.selectAll(".dot")
+        .classed("highlight", d => d.prompt_name === name);
+      d3.selectAll(".radar-point")
+        .classed("highlight", d => d.prompt_name === name);
+      // 우측 프롬프트/응답 표시
+      d3.json(`llm_prompts/${name}.json`)
+        .then(json => {
+          d3.select("#promptText").html(`
+            <h3>${name}</h3>
+            <strong>프롬프트:</strong>
+            <div class="prompt-box">${json.prompt}</div>
+            ${json.response ? `<strong>응답 결과:</strong>
+             <div class="prompt-box">${json.response}</div>` : ""}
+          `);
+        });
+    }
 
-    d3.csv("data/performance_metrics.csv").then(data => {
+    // CSV 로드 후 차트 그리기
+    d3.csv("data/performance_metrics_fn.csv").then(data => {
+      const metrics = ["BLEU","ROUGE1","ROUGEL","BERTScore"];
+
       metrics.forEach(metric => {
-        const width = 600;
-        const height = 300;
-        const margin = {top: 30, right: 30, bottom: 70, left: 60};
+        // SVG 기본 설정
+        const width = 500, height = 400;
+        const margin = {top: 50, right: 30, bottom: 80, left: metric==="BLEU"?180:60};
 
         const svg = d3.select("#charts")
           .append("svg")
           .attr("width", width)
-          .attr("height", height)
-          .attr("class", "chart");
+          .attr("height", height);
 
-        const x = d3.scaleBand()
-          .domain(data.map(d => d.prompt_name))
-          .range([margin.left, width - margin.right])
-          .padding(0.1);
-
-        const y = d3.scaleLinear()
-          .domain([0, d3.max(data, d => +d[metric])])
-          .nice()
-          .range([height - margin.bottom, margin.top]);
-
-        svg.append("g")
-          .attr("transform", `translate(0,${height - margin.bottom})`)
-          .call(d3.axisBottom(x))
-          .selectAll("text")
-          .attr("transform", "rotate(-45)")
-          .style("text-anchor", "end");
-
-        svg.append("g")
-          .attr("transform", `translate(${margin.left},0)`)
-          .call(d3.axisLeft(y));
-
-        svg.selectAll(".bar")
-          .data(data)
-          .enter()
-          .append("rect")
-          .attr("class", "bar")
-          .attr("x", d => x(d.prompt_name))
-          .attr("y", d => y(+d[metric]))
-          .attr("height", d => y(0) - y(+d[metric]))
-          .attr("width", x.bandwidth())
-          .on("mouseover", (event, d) => {
-            tooltip.style("opacity", 1)
-              .html(`<strong>${d.prompt_name}</strong><br/>${metricLabels[metric]}: <b>${d[metric]}</b>`);
-          })
-          .on("mousemove", event => {
-            tooltip.style("left", (event.pageX + 10) + "px")
-                   .style("top", (event.pageY - 28) + "px");
-          })
-          .on("mouseout", () => {
-            tooltip.style("opacity", 0);
-          })
-          .on("click", (event, d) => {
-            const file = `llm_prompts/${d.prompt_name}.json`;
-            d3.json(file).then(json => {
-              d3.select("#promptText").html(`
-                <h3>${d.prompt_name}</h3>
-                <strong>프롬프트:</strong>
-                <div class="prompt-box">${json.prompt}</div>
-                ${json.response ? `<strong>응답 결과:</strong><div class="prompt-box">${json.response}</div>` : ""}
-              `);
-            }).catch(err => {
-              d3.select("#promptText").html(`<h3>${d.prompt_name}</h3><p><i>프롬프트 파일을 불러올 수 없습니다.</i></p>`);
-            });
-          });
-
+        // 제목
         svg.append("text")
-          .attr("x", width / 2)
-          .attr("y", margin.top - 10)
-          .attr("text-anchor", "middle")
-          .style("font-size", "16px")
-          .text(`${metricLabels[metric]}`);
+          .attr("x", width/2).attr("y", margin.top/2)
+          .attr("text-anchor","middle")
+          .style("font-size","16px")
+          .text(metric);
+
+        // BLEU: Horizontal Bar
+        if (metric==="BLEU") {
+          const x = d3.scaleLinear()
+            .domain([0, d3.max(data,d=>+d[metric])])
+            .nice().range([margin.left, width-margin.right]);
+          const y = d3.scaleBand()
+            .domain(data.map(d=>d.prompt_name))
+            .range([margin.top, height-margin.bottom])
+            .padding(0.1);
+
+          svg.append("g")
+            .attr("transform",`translate(0,${margin.top})`)
+            .call(d3.axisTop(x).ticks(5));
+          svg.append("g")
+            .attr("transform",`translate(${margin.left},0)`)
+            .call(d3.axisLeft(y));
+
+          svg.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class","bar")
+            .attr("x", x(0))
+            .attr("y", d=>y(d.prompt_name))
+            .attr("width", d=>x(+d[metric]) - x(0))
+            .attr("height", y.bandwidth())
+            .on("click",(e,d)=>handleClick(d.prompt_name));
+        }
+
+        // ROUGE1: Vertical Bar
+        else if (metric==="ROUGE1") {
+          const x = d3.scaleBand()
+            .domain(data.map(d=>d.prompt_name))
+            .range([margin.left, width-margin.right])
+            .padding(0.1);
+          const y = d3.scaleLinear()
+            .domain([0, d3.max(data,d=>+d[metric])])
+            .nice().range([height-margin.bottom, margin.top]);
+
+          svg.append("g")
+            .attr("transform",`translate(0,${height-margin.bottom})`)
+            .call(d3.axisBottom(x))
+            .selectAll("text")
+            .attr("transform","rotate(-45)")
+            .style("text-anchor","end");
+          svg.append("g")
+            .attr("transform",`translate(${margin.left},0)`)
+            .call(d3.axisLeft(y));
+
+          svg.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class","bar")
+            .attr("x", d=>x(d.prompt_name))
+            .attr("y", d=>y(+d[metric]))
+            .attr("width", x.bandwidth())
+            .attr("height", d=>y(0)-y(+d[metric]))
+            .on("click",(e,d)=>handleClick(d.prompt_name));
+        }
+
+        // ROUGEL: Radar points
+        else if (metric==="ROUGEL") {
+          const radius = Math.min(width,height)/2 - 70;
+          const angle = 2*Math.PI / data.length;
+          const r = d3.scaleLinear()
+            .domain([0,d3.max(data,d=>+d[metric])])
+            .range([0,radius]);
+
+          const g = svg.append("g")
+            .attr("transform",`translate(${width/2},${height/2})`);
+
+          const line = d3.lineRadial()
+            .radius(d=>r(+d[metric]))
+            .angle((d,i)=>i*angle)
+            .curve(d3.curveLinearClosed);
+
+          // 면
+          g.append("path")
+            .datum(data)
+            .attr("class","radar-area")
+            .attr("d",line);
+
+          // 점
+          g.selectAll(".radar-point")
+            .data(data)
+            .enter().append("circle")
+            .attr("class","radar-point")
+            .attr("r",5)
+            .attr("cx",(d,i)=>r(+d[metric])*Math.cos(i*angle-Math.PI/2))
+            .attr("cy",(d,i)=>r(+d[metric])*Math.sin(i*angle-Math.PI/2))
+            .on("click",(e,d)=>handleClick(d.prompt_name));
+        }
+
+        // BERTScore: Line + dots
+        else if (metric==="BERTScore") {
+          const x = d3.scalePoint()
+            .domain(data.map(d=>d.prompt_name))
+            .range([margin.left, width-margin.right])
+            .padding(0.5);
+          const y = d3.scaleLinear()
+            .domain([0,d3.max(data,d=>+d[metric])])
+            .nice().range([height-margin.bottom, margin.top]);
+
+          svg.append("g")
+            .attr("transform",`translate(0,${height-margin.bottom})`)
+            .call(d3.axisBottom(x))
+            .selectAll("text")
+            .attr("transform","rotate(-45)")
+            .style("text-anchor","end");
+          svg.append("g")
+            .attr("transform",`translate(${margin.left},0)`)
+            .call(d3.axisLeft(y));
+
+          const lineGen = d3.line()
+            .x(d=>x(d.prompt_name))
+            .y(d=>y(+d[metric]));
+
+          svg.append("path")
+            .datum(data)
+            .attr("class","line")
+            .attr("d",lineGen);
+
+          svg.selectAll(".dot")
+            .data(data)
+            .enter().append("circle")
+            .attr("class","dot")
+            .attr("r",5)
+            .attr("cx",d=>x(d.prompt_name))
+            .attr("cy",d=>y(+d[metric]))
+            .on("click",(e,d)=>handleClick(d.prompt_name));
+        }
       });
     });
   </script>

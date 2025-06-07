@@ -1,46 +1,60 @@
 import os
 import json
-import re
-import pandas as pd
+import csv
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from rouge_score import rouge_scorer
+from bert_score import score as bert_score
+from tqdm import tqdm
 
-# 평가할 핵심 키워드
-keywords = [
-    "attention", "transformer", "self-attention", "encoder",
-    "decoder", "context", "sequence", "neural"
-]
+# 1️⃣ Load reference text (ocr_result.txt)
+with open('data/ocr_result.txt', 'r', encoding='utf-8') as f:
+    reference_text = f.read().strip()
 
-# 결과 저장 리스트
-results = []
+# 2️⃣ Prepare list of prompt json files
+llm_prompts_dir = 'llm_prompts'
+prompt_files = [f for f in os.listdir(llm_prompts_dir) if f.endswith('.json')]
 
-# 응답이 들어있는 폴더명
-response_dir = "llm_prompts"  # 너의 프롬프트 응답 JSON이 들어있는 폴더
+# 3️⃣ Initialize ROUGE scorer
+rouge_scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-# 폴더 내 JSON 파일 순회
-for filename in os.listdir(response_dir):
-    if filename.endswith(".json"):
-        with open(os.path.join(response_dir, filename), "r", encoding="utf-8") as f:
+# 4️⃣ Prepare CSV output
+output_file = 'data/performance_metrics_fn.csv'
+
+with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+    fieldnames = ['prompt_name', 'BLEU', 'ROUGE1', 'ROUGEL', 'BERTScore']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+
+    # 5️⃣ Process each prompt file
+    for prompt_file in tqdm(prompt_files, desc='Processing prompts'):
+        prompt_name = os.path.splitext(prompt_file)[0]
+
+        with open(os.path.join(llm_prompts_dir, prompt_file), 'r', encoding='utf-8') as f:
             data = json.load(f)
+            response_text = data.get('response', '').strip()
 
-        response = data["response"]
-        prompt_name = filename.replace(".json", "")
+        # BLEU score
+        reference_tokens = reference_text.split()
+        response_tokens = response_text.split()
+        smoothie = SmoothingFunction().method4
+        bleu_score = sentence_bleu([reference_tokens], response_tokens, smoothing_function=smoothie)
 
-        # 평가지표 계산
-        length_score = len(response)  # 글자 수
-        word_count = len(response.split())  # 단어 수
-        sentence_count = len(re.findall(r'[.!?]', response))  # 문장 수 추정
-        keyword_score = sum(1 for k in keywords if k.lower() in response.lower())  # 키워드 등장 수
+        # ROUGE scores
+        rouge_scores = rouge_scorer.score(reference_text, response_text)
+        rouge1_score = rouge_scores['rouge1'].fmeasure
+        rougel_score = rouge_scores['rougeL'].fmeasure
 
-        results.append({
-            "prompt_name": prompt_name,
-            "length_score": length_score,
-            "word_count": word_count,
-            "sentence_count": sentence_count,
-            "keyword_score": keyword_score
+        # BERTScore
+        P, R, F1 = bert_score([response_text], [reference_text], lang='en', verbose=False)
+        bertscore_f1 = F1[0].item()
+
+        # Write row to CSV
+        writer.writerow({
+            'prompt_name': prompt_name,
+            'BLEU': bleu_score,
+            'ROUGE1': rouge1_score,
+            'ROUGEL': rougel_score,
+            'BERTScore': bertscore_f1
         })
 
-# 결과를 DataFrame으로 정리
-df = pd.DataFrame(results)
-
-# CSV 파일로 저장
-df.to_csv("performance_metrics.csv", index=False, encoding="utf-8-sig")
-print("✅ 평가지표 계산 완료 → performance_metrics.csv 생성됨")
+print(f"\n✅ Performance metrics saved to {output_file}")
